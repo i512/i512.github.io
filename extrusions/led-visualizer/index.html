@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Addressable LED Animation Visualizer</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="editor-panel" aria-label="Animation code editor">
+        <header class="panel-header">
+          <div>
+            <h1>LED Animation Visualizer</h1>
+            <p>Write JavaScript that mutates <code>leds</code> on every interval tick.</p>
+          </div>
+          <div class="run-controls">
+            <label>
+              Interval
+              <select id="intervalSelect">
+                <option value="16">16 ms</option>
+                <option value="33">33 ms</option>
+                <option value="50" selected>50 ms</option>
+                <option value="100">100 ms</option>
+                <option value="250">250 ms</option>
+                <option value="500">500 ms</option>
+                <option value="1000">1000 ms</option>
+              </select>
+            </label>
+            <button id="toggleRunButton" type="button">Start</button>
+          </div>
+        </header>
+
+        <textarea
+          id="codeEditor"
+          spellcheck="false"
+          aria-label="JavaScript animation code"
+        ></textarea>
+
+        <div class="status-row">
+          <output id="codeStatus" class="status status-ok">Code is valid.</output>
+          <span id="ledCount">0 LEDs</span>
+        </div>
+
+        <details class="api-details">
+          <summary>Available API</summary>
+          <ul>
+            <li><code>leds</code>: array of LED objects: <code>{ x, y, z, r, g, b }</code></li>
+            <li><code>time</code>: seconds since animation start</li>
+            <li><code>iteration</code>: current execution count</li>
+            <li><code>delta</code>: seconds since previous execution</li>
+            <li><code>clamp(value, min, max)</code> and <code>rgb(r, g, b)</code></li>
+          </ul>
+        </details>
+      </section>
+
+      <section class="preview-panel" aria-label="3D LED preview">
+        <div class="preview-toolbar">
+          <div>
+            <h2>Preview</h2>
+          </div>
+          <div class="preview-actions">
+            <a class="toolbar-link" href="3d-approach.html">3D Approach</a>
+            <button id="toggleIndexesButton" type="button" aria-pressed="false">Show Indexes</button>
+            <button id="clearButton" type="button">Clear LEDs</button>
+          </div>
+        </div>
+        <div class="preview-stage">
+          <p id="placementHint">Hover over the floor to place an LED on the 12×12×12 grid.</p>
+          <div id="ledList" class="led-list" aria-label="Available LEDs"></div>
+          <canvas id="previewCanvas" aria-label="3D LED placement preview"></canvas>
+        </div>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,792 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>How the 3D LED Preview Works</title>
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+      .docs-shell {
+        max-width: 1160px;
+        margin: 0 auto;
+        padding: 1rem;
+      }
+
+      .docs-hero,
+      .docs-section,
+      .function-card,
+      .pipeline-card {
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: 1rem;
+        background: rgba(17, 24, 39, 0.84);
+        box-shadow: 0 1.5rem 5rem rgba(0, 0, 0, 0.18);
+      }
+
+      .docs-hero,
+      .docs-section {
+        margin-bottom: 1rem;
+        padding: 1.25rem;
+      }
+
+      .docs-nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        margin-top: 1rem;
+      }
+
+      .docs-nav a,
+      .back-link {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 0.45rem 0.7rem;
+        color: var(--text);
+        text-decoration: none;
+      }
+
+      .docs-nav a:hover,
+      .back-link:hover {
+        border-color: var(--accent);
+        color: #dbeafe;
+      }
+
+      .lede {
+        max-width: 68rem;
+        margin-top: 0.55rem;
+        color: var(--muted);
+        font-size: 1rem;
+        line-height: 1.65;
+      }
+
+      .pipeline-grid,
+      .function-grid {
+        display: grid;
+        gap: 1rem;
+      }
+
+      .pipeline-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .function-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .pipeline-card,
+      .function-card {
+        padding: 1rem;
+      }
+
+      .pipeline-card strong,
+      .function-card h3 {
+        color: var(--text);
+      }
+
+      .function-card h3 {
+        margin: 0 0 0.5rem;
+        font-size: 1rem;
+      }
+
+      .function-card p,
+      .pipeline-card p,
+      .formula-list li {
+        color: var(--muted);
+        line-height: 1.55;
+      }
+
+      .pipeline-card p,
+      .function-card p {
+        margin-top: 0.45rem;
+      }
+
+      .formula {
+        display: block;
+        overflow-x: auto;
+        white-space: pre;
+        margin: 0.75rem 0;
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: 0.7rem;
+        padding: 0.7rem;
+        background: rgba(2, 6, 23, 0.64);
+        color: #dbeafe;
+        line-height: 1.6;
+      }
+
+      .mini-viz {
+        width: 100%;
+        height: auto;
+        margin-top: 0.75rem;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 0.8rem;
+        background: #050816;
+      }
+
+      .viz-label {
+        fill: #e5edf7;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 12px;
+      }
+
+      .viz-muted {
+        fill: #93a4b8;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 11px;
+      }
+
+      .axis-x {
+        stroke: #ef4444;
+      }
+
+      .axis-y {
+        stroke: #22c55e;
+      }
+
+      .axis-z {
+        stroke: #60a5fa;
+      }
+
+      .accent-line {
+        stroke: #61dafb;
+      }
+
+      .accent-fill {
+        fill: #61dafb;
+      }
+
+      .warn-line {
+        stroke: #fbbf24;
+      }
+
+      .code-link {
+        color: #bfdbfe;
+      }
+
+      .callout {
+        border-left: 3px solid var(--accent);
+        margin-top: 1rem;
+        padding: 0.25rem 0 0.25rem 0.9rem;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+
+      @media (max-width: 920px) {
+        .pipeline-grid,
+        .function-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="docs-shell">
+      <a class="back-link" href="index.html">← Back to visualizer</a>
+
+      <section class="docs-hero">
+        <h1>How the 3D LED Preview Works</h1>
+        <p class="lede">
+          This project renders a 12×12×12 LED volume on a normal 2D canvas. It does not use WebGL.
+          The renderer keeps LED positions in world coordinates, builds a camera coordinate system
+          from yaw and pitch, orthographically projects 3D points into screen pixels, and inverse-projects
+          pointer positions back onto the floor or a vertical height ruler for LED placement.
+        </p>
+        <nav class="docs-nav" aria-label="Page sections">
+          <a href="#pipeline">Pipeline</a>
+          <a href="#coordinates">Coordinates</a>
+          <a href="#vector-math">Vector math</a>
+          <a href="#camera">Camera</a>
+          <a href="#projection">Projection</a>
+          <a href="#picking">Picking</a>
+          <a href="#drawing">Drawing</a>
+        </nav>
+      </section>
+
+      <section id="pipeline" class="docs-section">
+        <h2>Rendering Pipeline</h2>
+        <p class="lede">
+          The preview is a small software renderer. Every redraw clears the canvas, projects geometric
+          primitives, then draws lines and circles in the correct order.
+        </p>
+        <div class="pipeline-grid">
+          <article class="pipeline-card">
+            <strong>1. World data</strong>
+            <p><code>leds</code> contains points like <code>{ x, y, z, r, g, b }</code>. The cube bounds are fixed in <code>box</code>.</p>
+          </article>
+          <article class="pipeline-card">
+            <strong>2. Camera basis</strong>
+            <p><code>getCameraBasis()</code> converts <code>yaw</code> and <code>pitch</code> into three unit vectors: right, up, and forward.</p>
+          </article>
+          <article class="pipeline-card">
+            <strong>3. Projection</strong>
+            <p><code>projectPoint()</code> subtracts the cube center, measures the point along right/up/forward, and scales to pixels.</p>
+          </article>
+          <article class="pipeline-card">
+            <strong>4. Canvas draw</strong>
+            <p><code>drawFloorGrid()</code>, <code>drawBox()</code>, <code>drawLeds()</code>, and <code>drawPlacementMarkers()</code> paint the final frame.</p>
+          </article>
+        </div>
+        <svg class="mini-viz" viewBox="0 0 860 160" role="img" aria-label="Pipeline diagram">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#61dafb" />
+            </marker>
+          </defs>
+          <rect x="24" y="44" width="150" height="72" rx="12" fill="#0f172a" stroke="#243244" />
+          <text x="48" y="76" class="viz-label">LED positions</text>
+          <text x="48" y="96" class="viz-muted">x,y,z + rgb</text>
+          <line x1="184" y1="80" x2="274" y2="80" class="accent-line" stroke-width="2" marker-end="url(#arrow)" />
+          <rect x="284" y="44" width="150" height="72" rx="12" fill="#0f172a" stroke="#243244" />
+          <text x="310" y="76" class="viz-label">Camera basis</text>
+          <text x="310" y="96" class="viz-muted">right/up/forward</text>
+          <line x1="444" y1="80" x2="534" y2="80" class="accent-line" stroke-width="2" marker-end="url(#arrow)" />
+          <rect x="544" y="44" width="120" height="72" rx="12" fill="#0f172a" stroke="#243244" />
+          <text x="573" y="76" class="viz-label">Project</text>
+          <text x="567" y="96" class="viz-muted">3D → 2D</text>
+          <line x1="674" y1="80" x2="754" y2="80" class="accent-line" stroke-width="2" marker-end="url(#arrow)" />
+          <circle cx="792" cy="80" r="28" fill="#f97316" stroke="#fff7ed" stroke-width="2" />
+          <text x="777" y="124" class="viz-muted">canvas</text>
+        </svg>
+      </section>
+
+      <section id="coordinates" class="docs-section">
+        <h2>Coordinate System</h2>
+        <p class="lede">
+          The app uses a right-handed-ish world convention suitable for the LED box: <code>x</code> runs across the floor,
+          <code>y</code> runs deeper across the floor, and <code>z</code> is height. The origin is the bottom-front-left corner.
+          The camera points at <code>target</code>, which is the center of the box.
+        </p>
+        <code class="formula">box = { width: 12, depth: 12, height: 12 }
+target = { x: 6, y: 6, z: 6 }</code>
+        <svg class="mini-viz" viewBox="0 0 560 240" role="img" aria-label="Coordinate axes diagram">
+          <line x1="120" y1="180" x2="270" y2="180" class="axis-x" stroke-width="4" marker-end="url(#arrow)" />
+          <line x1="120" y1="180" x2="220" y2="110" class="axis-y" stroke-width="4" marker-end="url(#arrow)" />
+          <line x1="120" y1="180" x2="120" y2="42" class="axis-z" stroke-width="4" marker-end="url(#arrow)" />
+          <text x="282" y="184" class="viz-label">+x</text>
+          <text x="228" y="106" class="viz-label">+y</text>
+          <text x="96" y="34" class="viz-label">+z</text>
+          <circle cx="120" cy="180" r="5" fill="#e5edf7" />
+          <text x="86" y="206" class="viz-muted">(0,0,0)</text>
+          <circle cx="195" cy="145" r="5" fill="#61dafb" />
+          <text x="206" y="145" class="viz-muted">target (6,6,6)</text>
+          <polyline points="120,180 270,180 370,110 220,110 120,180 120,42 220,0 370,68 370,110" fill="none" stroke="rgba(148, 163, 184, 0.45)" stroke-width="2" />
+          <polyline points="270,180 270,42 370,0 370,68" fill="none" stroke="rgba(148, 163, 184, 0.28)" stroke-width="2" />
+          <polyline points="120,42 270,42 370,0" fill="none" stroke="rgba(148, 163, 184, 0.28)" stroke-width="2" />
+        </svg>
+      </section>
+
+      <section id="vector-math" class="docs-section">
+        <h2>Vector Math Primitives</h2>
+        <p class="lede">
+          These small functions are the foundation. They keep the rest of the renderer readable and make
+          the geometric intent explicit.
+        </p>
+        <div class="function-grid">
+          <article class="function-card">
+            <h3><code>clamp(value, min, max)</code> and <code>snapToGrid(value, min, max)</code></h3>
+            <p>
+              <code>clamp</code> restricts a value to a closed interval. <code>snapToGrid</code> rounds first, then clamps.
+              Placement uses this so pointer math cannot create LEDs outside the 12-unit box.
+            </p>
+            <code class="formula">clamp(14.2, 0, 12) = 12
+snapToGrid(4.6, 0, 12) = clamp(round(4.6), 0, 12) = 5</code>
+            <svg class="mini-viz" viewBox="0 0 440 120" role="img" aria-label="Clamp and snap number line">
+              <line x1="52" y1="58" x2="388" y2="58" stroke="#243244" stroke-width="4" />
+              <line x1="80" y1="58" x2="340" y2="58" class="accent-line" stroke-width="4" />
+              <text x="72" y="88" class="viz-muted">0</text>
+              <text x="334" y="88" class="viz-muted">12</text>
+              <circle cx="178" cy="58" r="7" fill="#fbbf24" />
+              <text x="145" y="34" class="viz-muted">4.6 → 5</text>
+              <circle cx="388" cy="58" r="7" fill="#fb7185" />
+              <path d="M388 58 C376 42, 354 42, 340 58" fill="none" stroke="#fb7185" stroke-width="2" />
+              <text x="306" y="34" class="viz-muted">14.2 → 12</text>
+            </svg>
+          </article>
+
+          <article class="function-card">
+            <h3><code>vector</code>, <code>add</code>, <code>subtract</code>, <code>scaleVector</code></h3>
+            <p>
+              <code>vector</code> is a lightweight constructor. The other three functions perform component-wise
+              arithmetic. Projection starts by computing <code>relative = subtract(point, target)</code>.
+            </p>
+            <code class="formula">a = (2, 1, 0), b = (1, 3, 0)
+add(a, b) = (3, 4, 0)
+subtract(a, b) = (1, -2, 0)
+scaleVector(a, 2) = (4, 2, 0)</code>
+            <svg class="mini-viz" viewBox="0 0 440 170" role="img" aria-label="Vector addition diagram">
+              <line x1="56" y1="132" x2="382" y2="132" stroke="#243244" />
+              <line x1="56" y1="132" x2="56" y2="24" stroke="#243244" />
+              <line x1="80" y1="120" x2="160" y2="84" class="axis-x" stroke-width="3" marker-end="url(#arrow)" />
+              <text x="125" y="78" class="viz-muted">a</text>
+              <line x1="160" y1="84" x2="200" y2="24" class="axis-y" stroke-width="3" marker-end="url(#arrow)" />
+              <text x="184" y="60" class="viz-muted">b</text>
+              <line x1="80" y1="120" x2="200" y2="24" class="accent-line" stroke-width="3" marker-end="url(#arrow)" />
+              <text x="212" y="28" class="viz-label">a + b</text>
+              <line x1="80" y1="120" x2="240" y2="48" class="warn-line" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow)" />
+              <text x="250" y="50" class="viz-muted">2a</text>
+            </svg>
+          </article>
+
+          <article class="function-card">
+            <h3><code>dot(a, b)</code></h3>
+            <p>
+              Dot product measures how much one vector points in another vector's direction. The renderer
+              uses it to convert world-space offsets into camera-space coordinates.
+            </p>
+            <code class="formula">dot(a, b) = ax * bx + ay * by + az * bz
+dot((3, 2, 0), (1, 0, 0)) = 3</code>
+            <svg class="mini-viz" viewBox="0 0 440 170" role="img" aria-label="Dot product projection diagram">
+              <line x1="56" y1="126" x2="382" y2="126" stroke="#243244" />
+              <line x1="80" y1="126" x2="300" y2="126" class="axis-x" stroke-width="3" marker-end="url(#arrow)" />
+              <text x="304" y="130" class="viz-label">b = camera right</text>
+              <line x1="80" y1="126" x2="240" y2="58" class="accent-line" stroke-width="3" marker-end="url(#arrow)" />
+              <line x1="240" y1="58" x2="240" y2="126" stroke="#93a4b8" stroke-width="2" stroke-dasharray="5 5" />
+              <circle cx="240" cy="126" r="5" fill="#fbbf24" />
+              <text x="132" y="150" class="viz-muted">dot = projected length</text>
+              <text x="248" y="72" class="viz-muted">a</text>
+            </svg>
+          </article>
+
+          <article class="function-card">
+            <h3><code>cross(a, b)</code></h3>
+            <p>
+              Cross product returns a vector perpendicular to two inputs. The camera uses it to construct
+              a clean orthogonal basis: <code>right = cross(worldUp, forward)</code>.
+            </p>
+            <code class="formula">cross(a, b) = (
+  ay*bz - az*by,
+  az*bx - ax*bz,
+  ax*by - ay*bx
+)
+cross((0,0,1), (1,0,0)) = (0,1,0)</code>
+            <svg class="mini-viz" viewBox="0 0 440 180" role="img" aria-label="Cross product perpendicular vector diagram">
+              <line x1="96" y1="132" x2="276" y2="132" class="axis-x" stroke-width="4" marker-end="url(#arrow)" />
+              <line x1="96" y1="132" x2="96" y2="36" class="axis-z" stroke-width="4" marker-end="url(#arrow)" />
+              <line x1="96" y1="132" x2="190" y2="76" class="axis-y" stroke-width="4" marker-end="url(#arrow)" />
+              <text x="282" y="136" class="viz-muted">forward</text>
+              <text x="68" y="32" class="viz-muted">worldUp</text>
+              <text x="198" y="78" class="viz-label">right</text>
+              <path d="M126 112 C150 96, 156 100, 178 108" fill="none" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrow)" />
+              <text x="210" y="28" class="viz-muted">perpendicular to both</text>
+            </svg>
+          </article>
+
+          <article class="function-card">
+            <h3><code>normalize(point)</code></h3>
+            <p>
+              Normalization keeps a vector's direction but changes its length to one. Basis vectors must
+              be unit-length, otherwise projection scale would change as the camera rotates.
+            </p>
+            <code class="formula">length = hypot(x, y, z)
+normalize((3, 4, 0)) = (3/5, 4/5, 0) = (0.6, 0.8, 0)</code>
+            <svg class="mini-viz" viewBox="0 0 440 160" role="img" aria-label="Normalize vector diagram">
+              <line x1="70" y1="120" x2="286" y2="48" class="accent-line" stroke-width="4" marker-end="url(#arrow)" />
+              <line x1="70" y1="120" x2="142" y2="96" class="warn-line" stroke-width="4" marker-end="url(#arrow)" />
+              <text x="292" y="50" class="viz-muted">length 5</text>
+              <text x="146" y="96" class="viz-label">length 1</text>
+              <text x="72" y="146" class="viz-muted">same direction, predictable scale</text>
+            </svg>
+          </article>
+
+          <article class="function-card">
+            <h3><code>snapPointToGrid(point)</code></h3>
+            <p>
+              This combines per-axis snapping for placement. It preserves the world-coordinate model while
+              forcing user-created LEDs onto integer grid coordinates.
+            </p>
+            <code class="formula">snapPointToGrid({ x: 2.2, y: 7.8, z: 3.5 })
+= { x: 2, y: 8, z: 4 }</code>
+            <svg class="mini-viz" viewBox="0 0 440 180" role="img" aria-label="Point snapping to grid diagram">
+              <g stroke="#243244">
+                <path d="M90 36 V144 M130 36 V144 M170 36 V144 M210 36 V144 M250 36 V144 M290 36 V144 M330 36 V144" />
+                <path d="M70 56 H350 M70 96 H350 M70 136 H350" />
+              </g>
+              <circle cx="158" cy="72" r="7" fill="#fb7185" />
+              <line x1="158" y1="72" x2="170" y2="56" class="accent-line" stroke-width="2" marker-end="url(#arrow)" />
+              <circle cx="170" cy="56" r="7" fill="#61dafb" />
+              <text x="180" y="60" class="viz-muted">nearest grid point</text>
+            </svg>
+          </article>
+        </div>
+      </section>
+
+      <section id="camera" class="docs-section">
+        <h2>Camera Construction</h2>
+        <p class="lede">
+          The camera is not a real object with a field of view. It is an orthographic view direction plus
+          two screen axes. Right-dragging changes <code>yaw</code> horizontally and <code>pitch</code> vertically.
+        </p>
+        <div class="function-grid">
+          <article class="function-card">
+            <h3><code>getCameraBasis()</code></h3>
+            <p>
+              First, spherical angles are converted to a unit direction. Then the direction is negated to
+              get <code>forward</code>, because the view plane faces toward the target. Cross products derive
+              the horizontal and vertical camera axes.
+            </p>
+            <code class="formula">cameraDirection = normalize((
+  cos(pitch) * cos(yaw),
+  cos(pitch) * sin(yaw),
+  sin(pitch)
+))
+forward = -cameraDirection
+right = normalize(cross((0,0,1), forward))
+up = normalize(cross(forward, right))</code>
+            <svg class="mini-viz" viewBox="0 0 520 220" role="img" aria-label="Camera basis diagram">
+              <circle cx="260" cy="112" r="8" fill="#fbbf24" />
+              <text x="274" y="116" class="viz-muted">target</text>
+              <line x1="260" y1="112" x2="160" y2="158" class="accent-line" stroke-width="4" marker-end="url(#arrow)" />
+              <text x="110" y="170" class="viz-label">forward</text>
+              <line x1="260" y1="112" x2="365" y2="130" class="axis-x" stroke-width="4" marker-end="url(#arrow)" />
+              <text x="372" y="134" class="viz-label">right</text>
+              <line x1="260" y1="112" x2="250" y2="44" class="axis-z" stroke-width="4" marker-end="url(#arrow)" />
+              <text x="218" y="40" class="viz-label">up</text>
+              <path d="M190 170 C230 194, 310 194, 354 164" fill="none" stroke="#93a4b8" stroke-width="2" stroke-dasharray="5 5" />
+              <text x="226" y="206" class="viz-muted">yaw rotates around world z</text>
+            </svg>
+          </article>
+
+          <article class="function-card">
+            <h3><code>getSceneMetrics()</code></h3>
+            <p>
+              This function converts canvas CSS size into projection constants. The scale is based on the
+              smaller dimension so the cube fits regardless of panel shape.
+            </p>
+            <code class="formula">scale = min(canvasWidth / 18, canvasHeight / 16)
+centerX = canvasWidth / 2
+centerY = canvasHeight / 2</code>
+            <svg class="mini-viz" viewBox="0 0 520 220" role="img" aria-label="Canvas metrics diagram">
+              <rect x="70" y="34" width="380" height="150" rx="8" fill="#050816" stroke="#243244" stroke-width="3" />
+              <line x1="260" y1="34" x2="260" y2="184" stroke="#93a4b8" stroke-dasharray="6 5" />
+              <line x1="70" y1="109" x2="450" y2="109" stroke="#93a4b8" stroke-dasharray="6 5" />
+              <circle cx="260" cy="109" r="6" fill="#61dafb" />
+              <text x="270" y="104" class="viz-label">center</text>
+              <text x="182" y="204" class="viz-muted">world units × scale = pixels</text>
+            </svg>
+          </article>
+        </div>
+      </section>
+
+      <section id="projection" class="docs-section">
+        <h2>Projection: 3D Point to 2D Pixel</h2>
+        <div class="function-grid">
+          <article class="function-card">
+            <h3><code>projectPoint(point)</code></h3>
+            <p>
+              This is the core of the visualizer. It subtracts the cube center, then uses dot products to
+              ask: “How far is this point along the camera's right, up, and forward axes?”
+            </p>
+            <code class="formula">relative = point - target
+screen.x = centerX + dot(relative, right) * scale
+screen.y = centerY - dot(relative, up) * scale
+depth = dot(relative, forward)</code>
+            <p>
+              The y formula subtracts because canvas y grows downward, while camera <code>up</code> grows upward.
+              The returned <code>depth</code> is later used for painter-style sorting and line fading.
+            </p>
+            <svg class="mini-viz" viewBox="0 0 520 240" role="img" aria-label="Projection of a 3D point into screen axes">
+              <rect x="270" y="34" width="170" height="150" rx="8" fill="#0f172a" stroke="#243244" />
+              <line x1="355" y1="109" x2="426" y2="109" class="axis-x" stroke-width="3" marker-end="url(#arrow)" />
+              <line x1="355" y1="109" x2="355" y2="52" class="axis-z" stroke-width="3" marker-end="url(#arrow)" />
+              <circle cx="392" cy="70" r="6" fill="#f97316" />
+              <text x="399" y="72" class="viz-muted">pixel</text>
+              <text x="316" y="206" class="viz-muted">screen plane</text>
+              <circle cx="112" cy="162" r="7" fill="#fbbf24" />
+              <text x="86" y="184" class="viz-muted">target</text>
+              <circle cx="174" cy="86" r="7" fill="#f97316" />
+              <line x1="112" y1="162" x2="174" y2="86" class="accent-line" stroke-width="3" marker-end="url(#arrow)" />
+              <text x="138" y="76" class="viz-muted">point</text>
+              <line x1="174" y1="86" x2="392" y2="70" stroke="#93a4b8" stroke-dasharray="6 5" />
+              <text x="196" y="128" class="viz-label">dot with camera axes</text>
+            </svg>
+          </article>
+
+          <article class="function-card">
+            <h3><code>resizeCanvas()</code></h3>
+            <p>
+              Canvas has CSS pixels and backing-store pixels. This function sizes the backing store by
+              <code>devicePixelRatio</code>, then applies <code>setTransform</code> so all drawing code can
+              continue using CSS pixels.
+            </p>
+            <code class="formula">canvas.width = rect.width * devicePixelRatio
+canvas.height = rect.height * devicePixelRatio
+context.setTransform(ratio, 0, 0, ratio, 0, 0)</code>
+            <svg class="mini-viz" viewBox="0 0 520 240" role="img" aria-label="High DPI canvas scaling diagram">
+              <rect x="70" y="54" width="150" height="110" rx="8" fill="#0f172a" stroke="#61dafb" stroke-width="3" />
+              <text x="96" y="188" class="viz-muted">CSS size</text>
+              <rect x="300" y="34" width="170" height="150" rx="8" fill="#0f172a" stroke="#fbbf24" stroke-width="3" />
+              <g stroke="#243244">
+                <path d="M321 34 V184 M342 34 V184 M363 34 V184 M384 34 V184 M405 34 V184 M426 34 V184 M447 34 V184" />
+                <path d="M300 55 H470 M300 76 H470 M300 97 H470 M300 118 H470 M300 139 H470 M300 160 H470" />
+              </g>
+              <text x="310" y="208" class="viz-muted">larger backing store</text>
+              <line x1="230" y1="110" x2="290" y2="110" class="accent-line" stroke-width="2" marker-end="url(#arrow)" />
+            </svg>
+          </article>
+        </div>
+      </section>
+
+      <section id="picking" class="docs-section">
+        <h2>Picking: Mouse Pixel Back to 3D</h2>
+        <p class="lede">
+          Placement is the inverse of projection. The first click chooses <code>x,y</code> on the floor.
+          The second click chooses <code>z</code> along a vertical line passing through that floor point.
+        </p>
+        <div class="function-grid">
+          <article class="function-card">
+            <h3><code>screenToFloor(clientX, clientY)</code></h3>
+            <p>
+              This converts the pointer into a point on the camera plane, then walks along <code>forward</code>
+              until it intersects the floor plane <code>z = 0</code>. The ray-plane intersection is solved with
+              one scalar <code>t</code>.
+            </p>
+            <code class="formula">worldPlanePoint =
+  target
+  + right * ((screenX - centerX) / scale)
+  + up * (-(screenY - centerY) / scale)
+
+t = -worldPlanePoint.z / forward.z
+floorPoint = worldPlanePoint + forward * t</code>
+            <p>
+              If <code>forward.z</code> is almost zero, the view is nearly parallel to the floor and the
+              intersection would be unstable, so the function returns <code>null</code>.
+            </p>
+            <svg class="mini-viz" viewBox="0 0 560 260" role="img" aria-label="Ray intersects floor plane diagram">
+              <polygon points="90,198 420,198 500,148 170,148" fill="rgba(96, 165, 250, 0.08)" stroke="#243244" />
+              <text x="90" y="226" class="viz-muted">floor plane z = 0</text>
+              <rect x="150" y="36" width="230" height="92" rx="8" fill="#0f172a" stroke="#243244" />
+              <circle cx="278" cy="78" r="6" fill="#61dafb" />
+              <text x="288" y="82" class="viz-muted">pointer on view plane</text>
+              <line x1="278" y1="78" x2="308" y2="174" class="accent-line" stroke-width="3" marker-end="url(#arrow)" />
+              <circle cx="308" cy="174" r="7" fill="#fbbf24" />
+              <text x="318" y="178" class="viz-label">floorPoint</text>
+              <text x="350" y="122" class="viz-muted">+ forward * t</text>
+            </svg>
+          </article>
+
+          <article class="function-card">
+            <h3><code>heightFromScreen(clientX, clientY, floorPoint)</code></h3>
+            <p>
+              After <code>x,y</code> are locked, the app projects the bottom and top of the vertical column.
+              It then projects the mouse onto that 2D segment with a dot product. The resulting fraction is
+              clamped to <code>0..1</code> and mapped to <code>0..box.height</code>.
+            </p>
+            <code class="formula">segment = top - bottom
+amount =
+  dot(mouse - bottom, segment) / dot(segment, segment)
+z = snapToGrid(clamp(amount, 0, 1) * box.height, 0, box.height)</code>
+            <svg class="mini-viz" viewBox="0 0 560 260" role="img" aria-label="Mouse projected onto height segment diagram">
+              <line x1="240" y1="210" x2="312" y2="48" class="warn-line" stroke-width="5" />
+              <circle cx="240" cy="210" r="7" fill="#fbbf24" />
+              <circle cx="312" cy="48" r="7" fill="#fbbf24" />
+              <text x="196" y="224" class="viz-muted">bottom</text>
+              <text x="320" y="52" class="viz-muted">top</text>
+              <circle cx="336" cy="120" r="7" fill="#61dafb" />
+              <text x="348" y="124" class="viz-muted">mouse</text>
+              <line x1="336" y1="120" x2="284" y2="112" stroke="#93a4b8" stroke-dasharray="6 5" />
+              <circle cx="284" cy="112" r="7" fill="#fb7185" />
+              <text x="176" y="116" class="viz-label">amount ≈ 0.6 → z ≈ 7</text>
+            </svg>
+          </article>
+
+          <article class="function-card">
+            <h3><code>handlePointerMove(event)</code></h3>
+            <p>
+              This function branches by interaction mode. Right-drag rotates the camera. With a selected
+              floor point, movement updates height. Otherwise, movement updates the hovered floor point.
+            </p>
+            <code class="formula">if rotating:
+  yaw += dx * 0.01
+  pitch = clamp(pitch - dy * 0.01, -0.05, 1.25)
+else if selectedFloorPoint:
+  selectedHeight = heightFromScreen(...)
+else:
+  hoverFloorPoint = screenToFloor(...)</code>
+            <svg class="mini-viz" viewBox="0 0 560 190" role="img" aria-label="Pointer move state machine diagram">
+              <rect x="50" y="54" width="130" height="70" rx="10" fill="#0f172a" stroke="#243244" />
+              <text x="78" y="84" class="viz-label">rotating</text>
+              <text x="74" y="104" class="viz-muted">update yaw/pitch</text>
+              <rect x="220" y="54" width="130" height="70" rx="10" fill="#0f172a" stroke="#243244" />
+              <text x="238" y="84" class="viz-label">height mode</text>
+              <text x="238" y="104" class="viz-muted">update z</text>
+              <rect x="390" y="54" width="130" height="70" rx="10" fill="#0f172a" stroke="#243244" />
+              <text x="416" y="84" class="viz-label">floor hover</text>
+              <text x="414" y="104" class="viz-muted">update x,y</text>
+            </svg>
+          </article>
+
+          <article class="function-card">
+            <h3><code>handlePointerDown(event)</code></h3>
+            <p>
+              Right click begins rotation. Left click either locks the current floor point or creates the
+              final LED after height is selected.
+            </p>
+            <code class="formula">right click → capture pointer and rotate
+left click + no floor selected → selectedFloorPoint = screenToFloor(...)
+left click + floor selected → addLed({ ...selectedFloorPoint, z })</code>
+            <svg class="mini-viz" viewBox="0 0 560 190" role="img" aria-label="Two click LED placement diagram">
+              <circle cx="84" cy="94" r="24" fill="#0f172a" stroke="#61dafb" stroke-width="3" />
+              <text x="73" y="100" class="viz-label">1</text>
+              <text x="42" y="142" class="viz-muted">lock x,y</text>
+              <line x1="120" y1="94" x2="218" y2="94" class="accent-line" stroke-width="2" marker-end="url(#arrow)" />
+              <line x1="260" y1="140" x2="260" y2="42" class="warn-line" stroke-width="4" />
+              <circle cx="260" cy="82" r="8" fill="#fbbf24" />
+              <text x="282" y="86" class="viz-muted">choose z</text>
+              <line x1="306" y1="94" x2="404" y2="94" class="accent-line" stroke-width="2" marker-end="url(#arrow)" />
+              <circle cx="452" cy="94" r="24" fill="#0f172a" stroke="#fbbf24" stroke-width="3" />
+              <text x="441" y="100" class="viz-label">2</text>
+              <text x="420" y="142" class="viz-muted">create LED</text>
+            </svg>
+          </article>
+        </div>
+      </section>
+
+      <section id="drawing" class="docs-section">
+        <h2>Drawing Functions</h2>
+        <div class="function-grid">
+          <article class="function-card">
+            <h3><code>boxCorners()</code>, <code>drawBox()</code>, and <code>drawFloorGrid()</code></h3>
+            <p>
+              <code>boxCorners</code> returns the eight cube vertices. <code>drawBox</code> projects them and connects
+              the twelve edges. <code>drawFloorGrid</code> draws integer grid lines on <code>z = 0</code>.
+            </p>
+            <code class="formula">corners = [
+  (0,0,0), (12,0,0), (12,12,0), (0,12,0),
+  (0,0,12), (12,0,12), (12,12,12), (0,12,12)
+]</code>
+            <p>
+              Edge alpha is adjusted by projected depth, giving a cheap depth cue without lighting.
+            </p>
+            <svg class="mini-viz" viewBox="0 0 520 250" role="img" aria-label="Box corners and floor grid diagram">
+              <g stroke="rgba(96, 165, 250, 0.18)">
+                <line x1="105" y1="186" x2="360" y2="186" />
+                <line x1="132" y1="166" x2="386" y2="166" />
+                <line x1="160" y1="146" x2="414" y2="146" />
+                <line x1="105" y1="186" x2="214" y2="108" />
+                <line x1="190" y1="186" x2="300" y2="108" />
+                <line x1="275" y1="186" x2="386" y2="108" />
+              </g>
+              <polyline points="105,186 360,186 414,146 160,146 105,186 105,74 160,34 414,34 414,146" fill="none" stroke="#94a3b8" stroke-width="2" />
+              <polyline points="360,186 360,74 414,34" fill="none" stroke="#94a3b8" stroke-width="2" />
+              <polyline points="105,74 360,74 414,34" fill="none" stroke="#94a3b8" stroke-width="2" />
+              <circle cx="105" cy="186" r="5" fill="#e5edf7" />
+              <circle cx="414" cy="34" r="5" fill="#e5edf7" />
+              <text x="72" y="212" class="viz-muted">corner 0</text>
+              <text x="424" y="38" class="viz-muted">corner 6</text>
+            </svg>
+          </article>
+
+          <article class="function-card">
+            <h3><code>drawLine(a, b, color, width)</code> and <code>drawCircle(point, radius, fill, stroke)</code></h3>
+            <p>
+              These are thin wrappers around Canvas 2D primitives. Higher-level functions pass already
+              projected screen points into them; they do not know anything about 3D.
+            </p>
+            <code class="formula">drawLine(projectPoint(worldA), projectPoint(worldB), color)
+drawCircle(projectPoint(led), radius, fill, stroke)</code>
+            <svg class="mini-viz" viewBox="0 0 520 210" role="img" aria-label="Canvas line and circle primitives">
+              <line x1="96" y1="144" x2="254" y2="62" class="accent-line" stroke-width="5" />
+              <circle cx="354" cy="104" r="34" fill="#f97316" stroke="#fff7ed" stroke-width="3" />
+              <text x="116" y="174" class="viz-muted">line between two screen pixels</text>
+              <text x="310" y="166" class="viz-muted">LED circle with stroke</text>
+            </svg>
+          </article>
+
+          <article class="function-card">
+            <h3><code>drawLeds()</code></h3>
+            <p>
+              LEDs are projected and sorted by <code>screen.depth</code> before drawing. This simple painter's
+              algorithm is sufficient because LEDs are circles, not intersecting 3D meshes.
+            </p>
+            <code class="formula">projected = leds.map(led => ({ led, screen: projectPoint(led) }))
+projected.sort((a, b) => a.screen.depth - b.screen.depth)
+brightness = clamp((r + g + b) / (255 * 3), 0, 1)
+radius = 4.5 + brightness * 3.5
+shadowBlur = 8 + brightness * 16</code>
+            <svg class="mini-viz" viewBox="0 0 520 230" role="img" aria-label="Painter sorting and LED brightness diagram">
+              <circle cx="188" cy="108" r="32" fill="rgb(40,80,255)" opacity="0.82" />
+              <circle cx="222" cy="96" r="25" fill="rgb(255,170,40)" opacity="0.92" />
+              <circle cx="252" cy="122" r="18" fill="rgb(30,220,120)" opacity="0.92" />
+              <text x="142" y="170" class="viz-muted">far → near draw order</text>
+              <line x1="132" y1="190" x2="304" y2="190" class="accent-line" stroke-width="2" marker-end="url(#arrow)" />
+              <circle cx="384" cy="92" r="12" fill="rgb(50,50,90)" />
+              <circle cx="430" cy="92" r="28" fill="rgb(255,220,120)" />
+              <text x="360" y="144" class="viz-muted">brighter = larger glow</text>
+            </svg>
+          </article>
+
+          <article class="function-card">
+            <h3><code>drawPlacementMarkers()</code> and <code>drawFloorPointGuides(point)</code></h3>
+            <p>
+              While hovering, the renderer draws guide lines on the floor to expose the snapped <code>x,y</code>.
+              After the first click, it draws the vertical height line and selected <code>z</code> marker.
+            </p>
+            <code class="formula">hover: draw floor crosshair + snapped floor point
+selected: draw vertical column from z=0 to z=12 + selected height point</code>
+            <svg class="mini-viz" viewBox="0 0 520 230" role="img" aria-label="Placement guide diagram">
+              <polygon points="84,170 360,170 430,116 154,116" fill="rgba(96, 165, 250, 0.08)" stroke="#243244" />
+              <line x1="118" y1="144" x2="394" y2="144" class="accent-line" stroke-width="3" />
+              <line x1="258" y1="170" x2="328" y2="116" class="accent-line" stroke-width="3" />
+              <circle cx="292" cy="142" r="8" fill="#61dafb" />
+              <line x1="292" y1="142" x2="292" y2="46" class="warn-line" stroke-width="4" />
+              <circle cx="292" cy="82" r="9" fill="#fbbf24" />
+              <text x="306" y="86" class="viz-muted">selected height</text>
+            </svg>
+          </article>
+
+          <article class="function-card">
+            <h3><code>render()</code></h3>
+            <p>
+              The frame function deliberately draws stable context first and transient UI last. That keeps
+              placement markers visible above the box and LEDs.
+            </p>
+            <code class="formula">clearRect(...)
+drawFloorGrid()
+drawBox()
+drawLeds()
+drawPlacementMarkers()
+update LED count and list</code>
+            <svg class="mini-viz" viewBox="0 0 520 190" role="img" aria-label="Render layer stack diagram">
+              <rect x="120" y="124" width="280" height="34" rx="7" fill="#0f172a" stroke="#243244" />
+              <text x="220" y="146" class="viz-muted">floor grid</text>
+              <rect x="140" y="94" width="280" height="34" rx="7" fill="#111827" stroke="#243244" />
+              <text x="252" y="116" class="viz-muted">box</text>
+              <rect x="160" y="64" width="280" height="34" rx="7" fill="#172554" stroke="#243244" />
+              <text x="260" y="86" class="viz-muted">LEDs</text>
+              <rect x="180" y="34" width="280" height="34" rx="7" fill="#422006" stroke="#fbbf24" />
+              <text x="252" y="56" class="viz-label">placement markers</text>
+            </svg>
+          </article>
+
+          <article class="function-card">
+            <h3><code>compileAnimation()</code> and <code>runAnimationIteration()</code></h3>
+            <p>
+              These functions are not part of the 3D math, but they feed the renderer. User code mutates
+              LED colors over time; after each successful tick, colors are normalized and <code>render()</code>
+              repaints the scene.
+            </p>
+            <code class="formula">compiledAnimation(leds, time, iteration, delta, clamp, rgb, ...)
+normalizeLedColors()
+render()</code>
+            <svg class="mini-viz" viewBox="0 0 520 190" role="img" aria-label="Animation loop updates LED colors then renders">
+              <rect x="62" y="62" width="120" height="60" rx="10" fill="#0f172a" stroke="#243244" />
+              <text x="84" y="96" class="viz-label">user code</text>
+              <line x1="192" y1="92" x2="272" y2="92" class="accent-line" stroke-width="2" marker-end="url(#arrow)" />
+              <rect x="282" y="62" width="108" height="60" rx="10" fill="#0f172a" stroke="#243244" />
+              <text x="298" y="86" class="viz-label">normalize</text>
+              <text x="310" y="106" class="viz-muted">0..255</text>
+              <line x1="400" y1="92" x2="456" y2="92" class="accent-line" stroke-width="2" marker-end="url(#arrow)" />
+              <circle cx="478" cy="92" r="20" fill="#f97316" stroke="#fff7ed" />
+            </svg>
+          </article>
+        </div>
+        <div class="callout">
+          The important architectural choice is that every operation stays in one of two spaces:
+          world space for geometry and screen space for Canvas drawing. Functions such as
+          <code>projectPoint</code>, <code>screenToFloor</code>, and <code>heightFromScreen</code> are the only bridges
+          between those spaces.
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
